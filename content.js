@@ -416,9 +416,21 @@
 
       if (andGoNext) {
         const currentStudent = getCurrentStudentName();
-        const nextBtn = document.querySelector('[title="Next Student"]');
+        // Updated selector: look for the next button with the new Material Icon structure
+        const nextBtn = document.querySelector('div[class*="Tile__RootDiv-sc-1ej5agu-0"][class*="cBrBfT"][class*="neutralTertiary"][class*="medium"] i.material-icons-outlined:contains("keyboard_arrow_right")');
+        
+        // Fallback to trying parent of the icon if direct click doesn't work
+        let buttonToClick = null;
         if (nextBtn) {
-          nextBtn.click();
+          buttonToClick = nextBtn.closest('[class*="Tile__RootDiv-sc-1ej5agu-0"]');
+        } else {
+          // Try alternative selectors in case of future changes
+          buttonToClick = document.querySelector('[title="Next Student"]') || 
+                          document.querySelector('[aria-label*="next" i]');
+        }
+        
+        if (buttonToClick) {
+          buttonToClick.click();
           await new Promise((resolve, reject) => {
             let checks = 0;
             const interval = setInterval(() => {
@@ -608,7 +620,7 @@
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
         details.as-accordion { border: 1px solid var(--as-border-color); border-radius: 8px; margin-bottom: 10px; background-color: #fff; }
         details.as-accordion[open] { border-color: #b9cde2; }
-        details.as-accordion summary { user-select: none; cursor: pointer; padding: 12px; font-weight: 600; list-style: none; display: flex; justify-content: space-between; align-items: center; background-color: var(--as-bg-light); border-radius: 7px; }
+        details.as-accordion summary { user-select: none; cursor: pointer; padding: 12px; font-weight: 600; list-style: none; display: flex; justify-content: space-between; align-items: center; background-color: #fafbfc; }
         details.as-accordion[open] summary { border-bottom: 1px solid var(--as-border-color); border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
         details.as-accordion summary .as-summary-title { display: flex; align-items: center; gap: 8px; }
         details.as-accordion summary .as-summary-icon { font-style: normal; }
@@ -632,7 +644,7 @@
         .as-button.as-primary:hover { background-color: var(--as-primary-hover); }
         .as-button.as-danger { background-color: var(--as-danger-color); color: white; border-color: var(--as-danger-color); }
         .as-button.as-danger:hover { background-color: var(--as-danger-hover); }
-        #as-studentAnswerPreview { white-space: pre-wrap; word-break: break-word; max-height: 60px; overflow-y: auto; border: 1px solid var(--as-bg-medium); padding: 8px; background: var(--as-bg-light); font-size: 12px; border-radius: 6px; margin-top: 8px; }
+        #as-studentAnswerPreview { white-space: pre-wrap; word-break: break-word; max-height: 60px; overflow-y: auto; border: 1px solid var(--as-bg-medium); padding: 8px; background: var(--as-bg-light); border-radius: 4px; }
         #as-studentAnswerStatus { font-size: 11px; text-align: center; margin-top: 4px; opacity: 0; transition: opacity 0.3s; height: 14px; }
         #as-autoGradeProgress { font-size: 12px; text-align: center; margin-top: 8px; height: 16px; font-weight: 500; }
         .as-settings-grid { display: grid; grid-template-columns: auto 1fr; gap: 8px 12px; align-items: center; }
@@ -641,7 +653,7 @@
 
       const header = document.createElement('div');
       header.id = 'as-header';
-      header.innerHTML = `<span>Auto Scorer v6.0</span><div class="as-header-buttons"><button id="as-resetPosButton" title="Reset Position">📍</button><button id="as-saveButton" title="Save Checker to Storage">💾</button><button id="as-loadButton" title="Reload Checker from Storage">📂</button></div>`;
+      header.innerHTML = `<span>Auto Scorer v6.0</span><div class="as-header-buttons"><button id="as-resetPosButton" title="Reset Position">📍</button><button id="as-saveButton" title="Save Checker">💾</button><button id="as-loadButton" title="Load Checker">📂</button></div>`;
 
       const contentWrapper = document.createElement('div');
       contentWrapper.className = 'as-content-wrapper';
@@ -667,7 +679,7 @@
       const conditionsAccordion = document.createElement('details');
       conditionsAccordion.className = 'as-accordion';
       conditionsAccordion.open = true;
-      conditionsAccordion.innerHTML = `<summary><div class="as-summary-title"><span class="as-summary-icon">🎯</span>Conditions</div></summary><div class="as-details-content"><div id="as-conditions-container"></div><button id="as-add-condition" class="as-button" style="margin-top:10px;">+ Add Condition</button></div>`;
+      conditionsAccordion.innerHTML = `<summary><div class="as-summary-title"><span class="as-summary-icon">🎯</span>Conditions</div></summary><div class="as-details-content"><div id="as-conditions-container"></div><button id="as-add-condition" class="as-button" style="width: 100%; margin-top: 8px;">+ Add Condition</button></div>`;
 
       const noneKeywordsAccordion = document.createElement('details');
       noneKeywordsAccordion.className = 'as-accordion';
@@ -683,7 +695,7 @@
       previewAccordion.id = 'as-preview-details';
       previewAccordion.className = 'as-accordion';
       previewAccordion.open = true;
-      previewAccordion.innerHTML = `<summary><div class="as-summary-title"><span class="as-summary-icon">👁️</span>Student Answer</div></summary><div class="as-details-content"><pre id="as-studentAnswerPreview"></pre><div id="as-studentAnswerStatus"></div><button id="as-refreshAnswer" class="as-button" style="padding: 6px; margin-top: 8px; font-size: 12px; font-weight: 500;">Refresh</button></div>`;
+      previewAccordion.innerHTML = `<summary><div class="as-summary-title"><span class="as-summary-icon">👁️</span>Student Answer</div></summary><div class="as-details-content"><pre id="as-studentAnswerPreview"></pre><div id="as-studentAnswerStatus"></div><button id="as-refreshAnswer" class="as-button" style="width: 100%; margin-top: 8px;">Refresh Answer</button></div>`;
 
       const actionButtons = document.createElement('div');
       actionButtons.className = 'as-action-buttons';
@@ -693,7 +705,7 @@
       autogradeAccordion.id = 'as-autograde-details';
       autogradeAccordion.className = 'as-accordion';
       autogradeAccordion.open = true;
-      autogradeAccordion.innerHTML = `<summary><div class="as-summary-title"><span class="as-summary-icon">🤖</span>Auto Grade</div></summary><div class="as-details-content"><div class="as-settings-grid"><label for="as-studentCount"># of Students:</label><input type="number" id="as-studentCount" placeholder="e.g., 25"><label for="as-speedSetting">Speed (ms):</label><input type="number" id="as-speedSetting" value="1500"></div><button id="as-autoGradeButton" class="as-button as-primary" style="margin-top: 12px;">Auto Grade All</button><div id="as-autoGradeProgress"></div></div>`;
+      autogradeAccordion.innerHTML = `<summary><div class="as-summary-title"><span class="as-summary-icon">🤖</span>Auto Grade</div></summary><div class="as-details-content"><div class="as-settings-grid"><label for="as-studentCount">Students to Grade:</label><input type="number" id="as-studentCount" value="5" min="1" /></div><div class="as-settings-grid"><label for="as-speedSetting">Speed (ms):</label><input type="number" id="as-speedSetting" value="1000" min="100" step="100" /></div><button id="as-autoGradeButton" class="as-button as-primary" style="width: 100%; margin-top: 8px;">Auto Grade All</button><div id="as-autoGradeProgress"></div></div>`;
 
       contentWrapper.append(tabs, simpleContent, numberContent, advancedContent, previewAccordion, actionButtons, autogradeAccordion);
       box.append(header, contentWrapper);
