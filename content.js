@@ -1,7 +1,7 @@
 ;(function () {
   "use strict";
 
-  console.log('[Content Script] Auto Scorer v6.0 (Simple/Advanced with Persistence) Loaded.');
+  console.log('[Content Script] Auto Scorer v6.1 (Skip No-Response) Loaded.');
 
   let uiInjected = false;
   let autoGradeAll = {
@@ -12,7 +12,6 @@
   const pendingPromises = {};
   let mainContentObserver = null;
 
-  // Storage key (you can later scope this by URL/question if you want per-question configs)
   const STORAGE_KEY = 'autoScorerCheckerConfig';
 
   // ---------------------------------------------------------------------------
@@ -124,11 +123,6 @@
     scoreInput.dispatchEvent(changeEvent);
   }
 
-  function getCurrentStudentName() {
-    const nameEl = document.querySelector('[class*="ResultsSelectedItemSidebarTop__NameHeading"]');
-    return nameEl ? nameEl.textContent.trim() : null;
-  }
-
   function updateStudentAnswerPromise(attempt = 1) {
     return new Promise((resolve, reject) => {
       const checkAnswer = (currentAttempt) => {
@@ -136,6 +130,17 @@
         const previewEl = document.getElementById("as-studentAnswerPreview");
         const statusEl = document.getElementById("as-studentAnswerStatus");
         if (!previewEl || !statusEl) return reject("UI not found");
+
+        // Check for "No response" element first
+        const noRespEl = document.querySelector('div[class*="ResultsSelectedItemSidebarAnswers__NoResponseDiv"]');
+        if (noRespEl) {
+          previewEl.textContent = "No response";
+          statusEl.textContent = "Student has not answered.";
+          statusEl.style.color = "#ff6600";
+          statusEl.style.opacity = "1";
+          resolve();
+          return;
+        }
 
         const studentResponseContent = document.querySelector('div[class*="AnswerContent__DisplayedAnswer"]');
         if (studentResponseContent) {
@@ -162,11 +167,10 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Simple/Advanced checker model (inspired by sample project)
+  // Simple/Advanced checker model
   // ---------------------------------------------------------------------------
 
   function getDefaultCheckerCode() {
-    // Safe default that always returns 0
     return `function checkAnswer(studentAnswer) {
   let score = 0;
   const maxScore = 100;
@@ -193,13 +197,7 @@
       conditions.push({ keywords, points, logic });
     });
 
-    return {
-      basePoints,
-      noneKeywords,
-      caseSensitive,
-      trimWhitespace,
-      conditions
-    };
+    return { basePoints, noneKeywords, caseSensitive, trimWhitespace, conditions };
   }
 
   function buildSimpleUIFromConfig(root, config) {
@@ -213,7 +211,7 @@
     if (basePointsEl) basePointsEl.value = (cfg.basePoints != null ? cfg.basePoints : 0);
     if (noneKeywordsEl) noneKeywordsEl.value = cfg.noneKeywords || '';
     if (caseSensitiveEl) caseSensitiveEl.checked = !!cfg.caseSensitive;
-    if (trimWhitespaceEl) trimWhitespaceEl.checked = cfg.trimWhitespace !== false; // default true
+    if (trimWhitespaceEl) trimWhitespaceEl.checked = cfg.trimWhitespace !== false;
 
     conditionsContainer.innerHTML = '';
     if (cfg.conditions && cfg.conditions.length) {
@@ -245,7 +243,6 @@
   const maxScore = 100;
 `;
 
-    // Disqualifying keywords
     if (noneKeywords && noneKeywords.trim()) {
       const parts = noneKeywords.split(',').map(k => k.trim()).filter(Boolean);
       if (parts.length) {
@@ -260,7 +257,6 @@
       }
     }
 
-    // Conditions that add to the score
     conditions.forEach(cond => {
       const keywords = (cond.keywords || '').split(',').map(k => k.trim()).filter(Boolean);
       if (!keywords.length) return;
@@ -284,12 +280,11 @@
     return code;
   }
 
-  // Checker widget state
   let checkerState = {
-    mode: 'simple',          // 'simple' | 'advanced'
-    code: '',                // current code in use
-    simpleConfig: null,      // last simple config
-    advancedEdited: false,   // true if advanced code diverged from simple-generated
+    mode: 'simple',
+    code: '',
+    simpleConfig: null,
+    advancedEdited: false,
   };
 
   function refreshAdvancedTextareaFromState(root) {
@@ -314,7 +309,6 @@
     chrome.storage.sync.get(STORAGE_KEY, data => {
       const stored = data[STORAGE_KEY];
       if (!stored) {
-        // No stored config: default to simple mode, default code
         checkerState.mode = 'simple';
         checkerState.simpleConfig = serializeSimpleConfig(root);
         checkerState.code = generateCodeFromSimpleConfig(checkerState.simpleConfig);
@@ -328,11 +322,9 @@
       checkerState.simpleConfig = stored.simpleConfig || null;
       checkerState.advancedEdited = !!stored.advancedEdited;
 
-      // Rebuild simple UI from stored config if available
       if (checkerState.simpleConfig) {
         buildSimpleUIFromConfig(root, checkerState.simpleConfig);
       } else {
-        // Fallback: build UI from scratch
         const conditionsContainer = root.querySelector('#as-conditions-container');
         if (conditionsContainer && !conditionsContainer.children.length) {
           addConditionRow(conditionsContainer, false);
@@ -356,44 +348,91 @@
   }
 
   function applyModeVisualState(root) {
-    const tabs = root.querySelectorAll('.as-tab');
-    const simpleTab = root.querySelector('.as-tab[data-tab="simple"]');
-    const advancedTab = root.querySelector('.as-tab[data-tab="advanced"]');
-    const simpleContent = root.querySelector('#as-simple-content');
-    const advancedContent = root.querySelector('#as-advanced-content');
+    // Visual state already handled by tab clicks
+    refreshAdvancedTextareaFromState(root);
+  }
 
-    if (!simpleTab || !advancedTab || !simpleContent || !advancedContent) return;
-
-    // Keep Number tab separate, only toggling Simple/Advanced
-    if (checkerState.mode === 'simple') {
-      // We do not force the selected tab if user is on Number tab, but we can
-      // at least ensure contents reflect state when those tabs are clicked.
-      // Visual "lock" of simple when advanced edited is not necessary here
-      // because we already gate using advancedEdited + confirm.
+  // ---------------------------------------------------------------------------
+  // Helper: advance to next student (used after scoring and for no-response)
+  // ---------------------------------------------------------------------------
+  async function goToNextStudent() {
+    // 1. Find and click the NEXT STUDENT button (not next question)
+    let nextBtn = null;
+    const icons = document.querySelectorAll('i.material-icons-outlined');
+    for (const icon of icons) {
+      if (icon.textContent.trim() === 'keyboard_arrow_right') {
+        const tileParent = icon.closest('[class*="Tile__RootDiv-sc-1ej5agu-0"]');
+        if (tileParent && tileParent.className.includes('transparentBg')) {
+          nextBtn = icon;
+          break;
+        }
+      }
+    }
+    let buttonToClick = nextBtn
+      ? nextBtn.closest('[class*="Tile__RootDiv-sc-1ej5agu-0"]')
+      : null;
+    if (!buttonToClick) {
+      buttonToClick = document.querySelector('[title="Next Student"]') ||
+                      document.querySelector('[aria-label*="next student" i]');
     }
 
-    // When user clicks tab, we will update checkerState.mode appropriately.
-    // Here we only ensure that the advanced textarea is synced to code
-    refreshAdvancedTextareaFromState(root);
+    if (!buttonToClick) {
+      throw new Error("Next button not found.");
+    }
+
+    buttonToClick.click();
+
+    // 2. Wait for the new student's answer to appear
+    await new Promise((resolve, reject) => {
+      let checks = 0;
+      const maxChecks = 40;   // 40 * 250ms = 10 seconds
+      const interval = setInterval(() => {
+        const answerEl = document.querySelector('div[class*="AnswerContent__DisplayedAnswer"]');
+        const noRespEl = document.querySelector('div[class*="ResultsSelectedItemSidebarAnswers__NoResponseDiv"]');
+        if (answerEl || noRespEl) {
+          clearInterval(interval);
+          resolve();
+        }
+        if (++checks >= maxChecks) {
+          clearInterval(interval);
+          reject(new Error("Timeout waiting for next student answer to load."));
+        }
+      }, 250);
+    });
+
+    // 3. Update preview
+    await updateStudentAnswerPromise();
   }
 
   // ---------------------------------------------------------------------------
   // Process current student
   // ---------------------------------------------------------------------------
-
   async function processCurrentStudent(andGoNext = false) {
     const root = document.getElementById('autoScorerBox');
     if (!root) {
       return Promise.reject("UI not found");
     }
 
+    // Check for "No response" before doing anything else
+    const noResponseEl = document.querySelector('div[class*="ResultsSelectedItemSidebarAnswers__NoResponseDiv"]');
+    if (noResponseEl) {
+      console.log("[Auto Scorer] No response from student, skipping scoring.");
+      if (andGoNext) {
+        try {
+          await goToNextStudent();
+        } catch (err) {
+          console.error("[Auto Scorer] Failed to advance past no-response:", err);
+          return Promise.reject(err);
+        }
+      }
+      return Promise.resolve();
+    }
+
     const advancedTextarea = root.querySelector('#as-advancedCode');
 
     if (checkerState.mode === 'simple') {
-      // Re-generate code from simple UI
       updateCodeFromSimpleUI(root, { alsoUpdateAdvancedIfNotEdited: !checkerState.advancedEdited });
     } else {
-      // Advanced mode: take whatever is in the textarea as the source of truth
       if (advancedTextarea) {
         checkerState.code = advancedTextarea.value || getDefaultCheckerCode();
       } else {
@@ -415,39 +454,7 @@
       setScore(parseFloat(scoreValue) || 0);
 
       if (andGoNext) {
-        const currentStudent = getCurrentStudentName();
-        // Updated selector: look for the next button with the new Material Icon structure
-        const nextBtn = document.querySelector('div[class*="Tile__RootDiv-sc-1ej5agu-0"][class*="cBrBfT"][class*="neutralTertiary"][class*="medium"] i.material-icons-outlined:contains("keyboard_arrow_right")');
-        
-        // Fallback to trying parent of the icon if direct click doesn't work
-        let buttonToClick = null;
-        if (nextBtn) {
-          buttonToClick = nextBtn.closest('[class*="Tile__RootDiv-sc-1ej5agu-0"]');
-        } else {
-          // Try alternative selectors in case of future changes
-          buttonToClick = document.querySelector('[title="Next Student"]') || 
-                          document.querySelector('[aria-label*="next" i]');
-        }
-        
-        if (buttonToClick) {
-          buttonToClick.click();
-          await new Promise((resolve, reject) => {
-            let checks = 0;
-            const interval = setInterval(() => {
-              const newStudent = getCurrentStudentName();
-              if (newStudent !== currentStudent && newStudent !== null) {
-                clearInterval(interval);
-                updateStudentAnswerPromise().then(resolve).catch(reject);
-              }
-              if (++checks > 50) {
-                clearInterval(interval);
-                reject("Timeout waiting for next student to load.");
-              }
-            }, 100);
-          });
-        } else {
-          return Promise.reject("Next button not found.");
-        }
+        await goToNextStudent();
       }
       return Promise.resolve();
     } catch (err) {
@@ -459,7 +466,6 @@
   // ---------------------------------------------------------------------------
   // Auto-grade loop
   // ---------------------------------------------------------------------------
-
   async function startAutoGradeAll() {
     if (autoGradeAll.isRunning) return;
 
@@ -511,7 +517,6 @@
   // ---------------------------------------------------------------------------
   // Simple tab condition rows
   // ---------------------------------------------------------------------------
-
   let conditionCount = 0;
 
   function addConditionRow(container, focusOnNew = true) {
@@ -571,12 +576,10 @@
   // ---------------------------------------------------------------------------
   // Main UI injection
   // ---------------------------------------------------------------------------
-
   function injectUI() {
     if (uiInjected) return;
 
     try {
-      // Ensure sandbox iframe exists
       if (!document.getElementById('scorer-sandbox')) {
         const iframe = document.createElement('iframe');
         iframe.id = 'scorer-sandbox';
@@ -653,7 +656,7 @@
 
       const header = document.createElement('div');
       header.id = 'as-header';
-      header.innerHTML = `<span>Auto Scorer v6.0</span><div class="as-header-buttons"><button id="as-resetPosButton" title="Reset Position">📍</button><button id="as-saveButton" title="Save Checker">💾</button><button id="as-loadButton" title="Load Checker">📂</button></div>`;
+      header.innerHTML = `<span>Auto Scorer v6.1</span><div class="as-header-buttons"><button id="as-resetPosButton" title="Reset Position">📍</button><button id="as-saveButton" title="Save Checker">💾</button><button id="as-loadButton" title="Load Checker">📂</button></div>`;
 
       const contentWrapper = document.createElement('div');
       contentWrapper.className = 'as-content-wrapper';
@@ -710,7 +713,6 @@
       contentWrapper.append(tabs, simpleContent, numberContent, advancedContent, previewAccordion, actionButtons, autogradeAccordion);
       box.append(header, contentWrapper);
 
-      // Fill none-keywords and general settings
       const noneKeywordsContainer = noneKeywordsAccordion.querySelector("#as-none-keywords-container");
       noneKeywordsContainer.append(createKeywordInputGroup("Keywords (comma-separated)", "as-noneKeywords", "e.g., incorrect, wrong"));
 
@@ -723,7 +725,6 @@
 
       document.body.appendChild(box);
 
-      // Wire simple UI change events
       box.querySelectorAll('#as-basePoints, #as-noneKeywords, #as-caseSensitive, #as-trimWhitespace').forEach(el => {
         el.addEventListener('input', () => {
           if (checkerState.mode !== 'simple') return;
@@ -733,56 +734,44 @@
       });
 
       const conditionsContainer = box.querySelector('#as-conditions-container');
-      box.querySelector('#as-add-condition').onclick = () => {
-        addConditionRow(conditionsContainer);
-      };
+      box.querySelector('#as-add-condition').onclick = () => addConditionRow(conditionsContainer);
 
-      // Tabs
       box.querySelectorAll('.as-tab').forEach(tab => {
         tab.addEventListener('click', () => {
           box.querySelectorAll('.as-tab').forEach(t => t.classList.remove('active'));
           tab.classList.add('active');
           box.querySelectorAll('.as-tab-content').forEach(c => c.classList.remove('active'));
           box.querySelector(`#as-${tab.dataset.tab}-content`).classList.add('active');
-
-          if (tab.dataset.tab === 'simple') {
-            checkerState.mode = 'simple';
-          } else if (tab.dataset.tab === 'advanced') {
-            checkerState.mode = 'advanced';
-          }
+          if (tab.dataset.tab === 'simple') checkerState.mode = 'simple';
+          else if (tab.dataset.tab === 'advanced') checkerState.mode = 'advanced';
           persistCheckerState();
         });
       });
 
-      // Advanced textarea changes
       const advancedTextarea = box.querySelector('#as-advancedCode');
       advancedTextarea.addEventListener('input', () => {
         const trimmedNow = advancedTextarea.value.trim();
         const generatedFromSimple = checkerState.simpleConfig
           ? generateCodeFromSimpleConfig(checkerState.simpleConfig).trim()
           : '';
-
         checkerState.code = advancedTextarea.value;
-
-        // Mark as edited if it's different from simple-generated code
         checkerState.advancedEdited = (trimmedNow !== generatedFromSimple);
         persistCheckerState();
       });
 
-      // Buttons
       box.querySelector('#as-refreshAnswer').onclick = () => updateStudentAnswerPromise().catch(err => console.error(err));
 
       box.querySelector('#as-scoreButton').onclick = async () => {
         const btn = box.querySelector('#as-scoreButton');
         btn.textContent = 'Scoring...'; btn.disabled = true;
-        await processCurrentStudent(false).catch((err) => console.error("Scoring failed:", err));
+        await processCurrentStudent(false).catch(err => console.error("Scoring failed:", err));
         btn.disabled = false; btn.textContent = 'Score';
       };
 
       box.querySelector('#as-scoreNextButton').onclick = async () => {
         const btn = box.querySelector('#as-scoreNextButton');
         btn.textContent = 'Scoring...'; btn.disabled = true;
-        await processCurrentStudent(true).catch((err) => console.error("Scoring & Next failed:", err));
+        await processCurrentStudent(true).catch(err => console.error("Scoring & Next failed:", err));
         btn.disabled = false; btn.textContent = 'Score & Next';
       };
 
@@ -805,7 +794,6 @@
         box.style.top = '100px'; box.style.left = '20px';
       };
 
-      // Dragging
       let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
       header.onmousedown = (e) => {
         e.preventDefault();
@@ -820,7 +808,6 @@
         };
       };
 
-      // Initialize default simple UI and state, then hydrate from storage
       const initialConditionsContainer = box.querySelector('#as-conditions-container');
       if (initialConditionsContainer && !initialConditionsContainer.children.length) {
         addConditionRow(initialConditionsContainer, false);
@@ -843,9 +830,8 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Initialization / Observe Formative UI
+  // Initialization
   // ---------------------------------------------------------------------------
-
   function observeAndInject() {
     if (document.getElementById('autoScorerBox')) return;
     const targetSelector = 'div[class^="ResultsSelectedItemSidebarAnswers"]';
