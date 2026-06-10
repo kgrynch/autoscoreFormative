@@ -1,0 +1,39 @@
+{
+"update_url": "https://clients2.google.com/service/update2/crx",
+
+  "manifest_version": 3,
+  "name": "GoFormative Dynamic Auto Scorer",
+  "version": "3.5",
+  "description": "Works on goformative.com and formative.com platforms.",
+  "permissions": ["storage"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": "images/icon48.png"
+  },
+  "icons": {
+    "16": "images/icon16.png",
+    "48": "images/icon48.png",
+    "128": "images/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://goformative.com/*",
+        "https://*.goformative.com/*",
+        "https://formative.com/*",
+        "https://*.formative.com/*"
+      ],
+      "js": ["content.js"]
+    }
+  ],
+  "sandbox": {
+    "pages": ["sandbox.html"]
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["sandbox.html"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
+
